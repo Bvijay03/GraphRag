@@ -1,0 +1,6 @@
+networkx
+python-igraph
+pyyaml
+pytest
+numpy
+scipy

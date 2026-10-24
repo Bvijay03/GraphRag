@@ -1,0 +1,35 @@
+seed: 42
+
+graph:                      # p_out and seed are overridden per run by the experiment section
+  seed: 42
+  n_communities: 6
+  community_size: 33
+  p_in: 0.2
+  p_out: 0.004
+  n_bridges: 10
+  n_hubs: 10
+  planted_degree: 12
+  n_cross: 3
+
+llm:
+  backend: mock             # mock | planted | template | ollama
+  model: qwen3:14b          # pin the exact tag you tested
+  num_ctx: 16384            # always explicit: Ollama truncates silently by default
+  temperature: 0
+  seed: 42
+  think: false              # Qwen3 thinking off
+  mock_keep_fraction: 0.5
+  planted:                  # used only by the 'planted' test backend
+    base: 0.8
+    effect: -0.4
+    boost_flat: 0.0
+    boost_scaled: 0.0
+
+experiment:
+  n_graphs: 20              # graphs per p_out value
+  seed_start: 1
+  p_out_values: [0.004, 0.01]
+  k_marked: 3               # nodes marked per community in topology / control prompts
+  max_triples: null         # input budget per community (null = no budget)
+  qa_n: 40                  # questions per graph
+  context_limit: null       # null = num_ctx for ollama, no limit for other backends
