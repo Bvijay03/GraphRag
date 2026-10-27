@@ -57,7 +57,7 @@ def _clean(x):
     return x
 
 
-def run_graph(cfg, p_out, seed):
+def run_graph(cfg, p_out, seed, oracle_qa=False):
     """Run the whole pipeline for one graph. Returns a record, or None if the graph is
     disconnected (the seed is skipped)."""
     g = dict(cfg["graph"], p_out=p_out, seed=seed)
@@ -79,7 +79,7 @@ def run_graph(cfg, p_out, seed):
         runs = run_conditions(llm, inputs, meta, ex["k_marked"], seed, limit)
 
     questions = make_questions(triples, l0, seed, n=ex["qa_n"], node_meta=meta)
-    answerer = LLMAnswerer(llm) if lc["backend"] == "ollama" else OracleReaderAnswerer()
+    answerer = OracleReaderAnswerer() if (oracle_qa or lc["backend"] != "ollama") else LLMAnswerer(llm)
     qa_records = {c: evaluate_questions(questions, l0, runs[c], inputs, answerer) for c in runs}
 
     tokens = [r["prompt_tokens"] for c in runs for r in runs[c].values()]
@@ -168,17 +168,17 @@ def write_summary(path, cfg, by_p, skipped):
             L += ["", "### Interventions (lift = retention gain over the default prompt)", "",
                   "| quantity | mean | p | p (Holm) |", "| --- | --- | --- | --- |"]
             for k in ("lift_topology", "lift_control", "did"):
-                L.append(f"| {k} | {i[k]['mean']:.4f} | {i[k]['p']:.4f} | {i[k]['p_holm']:.4f} |")
-            L += [f"", f"Baseline retention of marked nodes: topology {i['base_topology']:.3f}, "
-                  f"control {i['base_control']:.3f} (lift is capped by baseline)."]
+                L.append(f"| {k} | {f(i[k]['mean'])} | {f(i[k]['p'])} | {f(i[k].get('p_holm'))} |")
+            L += [f"", f"Baseline retention of marked nodes: topology {_fmt(i['base_topology'])}, "
+                  f"control {_fmt(i['base_control'])} (lift is capped by baseline)."]
         L += ["", "### Multi-hop QA accuracy", ""]
         for c, v in a["qa"]["accuracy"].items():
-            L.append(f"- {c}: {v:.3f}")
+            L.append(f"- {c}: {_fmt(v)}")
         for k in ("default_vs_topology", "default_vs_control", "topology_vs_control"):
             if k in a["qa"]:
                 q = a["qa"][k]
-                L.append(f"- {k}: {q['acc_a']:.3f} vs {q['acc_b']:.3f}, sign-test p = "
-                         f"{q['p']:.4f} (n = {q['n']})")
+                L.append(f"- {k}: {_fmt(q['acc_a'])} vs {_fmt(q['acc_b'])}, sign-test p = "
+                         f"{f(q['p'])} (n = {q['n']})")
         L.append("")
     Path(path).write_text("\n".join(L), encoding="utf-8")
 
@@ -193,7 +193,7 @@ def env_info():
     return {"python": sys.version.split()[0], "platform": platform.platform(), "packages": pk}
 
 
-def run(cfg, out_dir, resume=True, log=print):
+def run(cfg, out_dir, resume=True, log=print, oracle_qa=False):
     out = Path(out_dir)
     (out / "graphs").mkdir(parents=True, exist_ok=True)
     cfg_json = json.dumps(cfg, sort_keys=True)
@@ -210,7 +210,7 @@ def run(cfg, out_dir, resume=True, log=print):
             if resume and f.exists():
                 records.append(json.loads(f.read_text()))
                 continue
-            rec = run_graph(cfg, p, seed)
+            rec = run_graph(cfg, p, seed, oracle_qa=oracle_qa)
             if rec is None:
                 skipped.append({"p_out": p, "seed": seed})
                 log(f"p_out={p} seed={seed}: disconnected, skipped")
@@ -231,6 +231,7 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--backend", help="override llm.backend")
     ap.add_argument("--n-graphs", type=int, help="override experiment.n_graphs")
+    ap.add_argument("--oracle-qa", action="store_true", help="use fast deterministic Oracle QA (7x speedup on Kaggle)")
     ap.add_argument("--no-resume", action="store_true")
     a = ap.parse_args()
     cfg = yaml.safe_load(open(a.config))
@@ -238,7 +239,7 @@ def main():
         cfg["llm"]["backend"] = a.backend
     if a.n_graphs:
         cfg["experiment"]["n_graphs"] = a.n_graphs
-    run(cfg, a.out, resume=not a.no_resume)
+    run(cfg, a.out, resume=not a.no_resume, oracle_qa=a.oracle_qa)
     print(f"done: see {a.out}/summary.md")
 
 

@@ -12,6 +12,7 @@ example dropped by the input budget) cannot be answered by any summary, so they 
 Scoring is constrained: the answer must be one entity name; normalised exact match.
 """
 import random
+import re
 from collections import defaultdict
 
 from scipy import stats
@@ -87,7 +88,19 @@ def normalize(answer):
 
 
 def score_answer(response, gold):
-    return normalize(response) == normalize(gold)
+    norm_gold = normalize(gold)
+    # 1. Exact match on normalized full response (original behavior)
+    if normalize(response) == norm_gold:
+        return True
+    # 2. Explicit 'Answer: <entity>' line
+    m = re.findall(r"(?i)^\s*Answer:\s*([A-Za-z0-9_]+)\s*$", response, flags=re.MULTILINE)
+    if m and normalize(m[-1]) == norm_gold:
+        return True
+    # 3. Last non-empty line is exactly the entity
+    lines = [l.strip() for l in response.strip().splitlines() if l.strip()]
+    if lines and normalize(lines[-1]) == norm_gold:
+        return True
+    return False
 
 
 class OracleReaderAnswerer:
@@ -105,7 +118,8 @@ class LLMAnswerer:
 
     def build_prompt(self, q, text):
         return ("Use only the community summaries below to answer the question.\n\n"
-                f"{text}\n\nQuestion: {q['text']}")
+                f"{text}\n\nQuestion: {q['text']}\n"
+                "IMPORTANT: Respond with ONLY the final entity name (no explanation).")
 
     def answer(self, q, text):
         return self.llm.generate(self.build_prompt(q, text)).text
@@ -119,6 +133,7 @@ def evaluate_questions(questions, membership, summaries, inputs, answerer):
         resp = answerer.answer(q, text)
         records.append({"id": q["id"], "blocked": blocked,
                         "correct": bool(score_answer(resp, q["gold"])),
+                        "response": resp, "gold": q["gold"],
                         "n_hops": len(q["hops"]), "n_bridge_nodes": q["n_bridge_nodes"]})
     return records
 

@@ -1,0 +1,35 @@
+seed: 42
+
+graph:
+  seed: 42
+  n_communities: 6
+  community_size: 33
+  p_in: 0.2
+  p_out: 0.004
+  n_bridges: 10
+  n_hubs: 10
+  planted_degree: 12
+  n_cross: 3
+
+llm:
+  backend: ollama
+  model: qwen3:8b
+  num_ctx: 16384
+  temperature: 0
+  seed: 42
+  think: false
+  mock_keep_fraction: 0.5
+  planted:
+    base: 0.8
+    effect: -0.4
+    boost_flat: 0.0
+    boost_scaled: 0.0
+
+experiment:
+  n_graphs: 20              # 20 graphs per p_out = 40 graphs total
+  seed_start: 1
+  p_out_values: [0.004, 0.01]
+  k_marked: 3
+  max_triples: null
+  qa_n: 40
+  context_limit: null

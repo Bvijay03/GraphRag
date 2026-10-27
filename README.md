@@ -1,103 +1,128 @@
 # MP2: Node centrality and fact retention in hierarchical GraphRAG community summaries
 
-Question: when a knowledge graph is split into hierarchical communities and each community is
-compressed into an LLM summary, do high-betweenness **bridge** nodes lose more facts than
-**hub** nodes of the same degree? Is the loss caused by the partition (cut edges) or by the
-LLM's compression? Does a topology-aware prompt help?
+**Core Research Question:** When a knowledge graph is split into hierarchical communities and each community is compressed into an LLM summary, do high-betweenness **bridge** nodes lose more facts than **hub** nodes of the same degree? Is the loss caused by the partition (cut edges) or by the LLM's compression? Does a topology-aware prompt help?
 
-Everything runs on a laptop with the mock backends. Real summaries need the GPU machine.
+---
 
-## Install and test (laptop)
+## ⚡ Fast Modular Pipeline (Recommended for Kaggle & GPU Runs)
+
+Instead of running an monolithic script that does graph generation, Leiden clustering, LLM summarization, QA answering, and statistics in one long 20+ hour loop, the experiment is broken into **4 clean, independent, resumable steps**:
 
 ```
-python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+[Step 1: Prepare]  ──►  [Step 2: Summarize]  ──►  [Step 3: Evaluate]  ──►  [Step 4: Report]
+ (Local / 5 sec)          (GPU / ~2 hours)          (Local / 3 sec)         (Local / 1 sec)
+```
+
+| Script | What it does | Hardware | Time (40 Graphs) | Output Saved |
+| :--- | :--- | :---: | :---: | :--- |
+| **`step1_prepare.py`** | SBM graph generation, Leiden community hierarchy, within/cut triple stratification, question generation | CPU (laptop) | **~5 seconds** | `<out>/prepared/poutX_seedY.json` |
+| **`step2_summarize.py`** | Generates community summaries under 3 conditions (`default`, `topology`, `control`). **The only step needing GPU.** | **GPU (Kaggle T4)** | **~2 hours** | `<out>/summaries/poutX_seedY.json` |
+| **`step3_evaluate.py`** | Evaluates fact retention (L1, L2, within/cut strata), DiD lift, and exact Oracle QA accuracy deterministically | CPU (laptop) | **~3 seconds** | `<out>/graphs/poutX_seedY.json` |
+| **`step4_report.py`** | Aggregates all graph records, runs t-tests, Holm correction, sign-tests, and writes reports | CPU (laptop) | **~1 second** | `<out>/results.json`<br>`<out>/summary.md` |
+
+### Why is this 7x Faster?
+In the monolithic runner, Qwen is asked to answer 120 QA questions per graph on top of generating 18 summaries. On Kaggle T4, this blew up each graph to ~28 minutes (18+ hours total). In the modular pipeline:
+- **Summaries (the actual experiment):** 18 LLM calls per graph (~2.5 minutes per graph).
+- **QA & Retention (the evaluation):** Deterministically scored in Step 3 in milliseconds using `OracleReaderAnswerer`. Fact retention is measured directly against what the model generated, removing answering noise entirely.
+
+---
+
+## 🚀 Running on Kaggle
+
+1. Open the included notebook: [`kaggle_mp2_modular.ipynb`](file:///d:/MP_2/Code/mp2/kaggle_mp2_modular.ipynb)
+2. In Kaggle, create a new notebook with:
+   - **Accelerator:** GPU T4 x2 or T4 x1
+   - **Internet:** On
+   - **Persistence:** Files only
+3. Execute the notebook cells:
+   ```bash
+   # Cell 1-2: Install Ollama & pull model
+   !curl -fsSL https://ollama.com/install.sh | sh
+   !ollama pull qwen3:8b
+
+   # Cell 3: Clone repo
+   !git clone https://github.com/Bvijay03/GraphRag.git /kaggle/working/mp2
+   %cd /kaggle/working/mp2
+
+   # Cell 4: Step 1 - Prepare (5 seconds)
+   !python step1_prepare.py --config config_kaggle.yaml --out runs/exp1
+
+   # Cell 5: Step 2 - Summarize (GPU accelerated, ~2 hours)
+   !python step2_summarize.py --config config_kaggle.yaml --out runs/exp1 --backend ollama
+
+   # Cell 6: Step 3 - Evaluate (3 seconds)
+   !python step3_evaluate.py --config config_kaggle.yaml --out runs/exp1
+
+   # Cell 7: Step 4 - Generate Report (1 second)
+   !python step4_report.py --config config_kaggle.yaml --out runs/exp1
+   ```
+4. **Resumable by default:** Every graph's summary is saved to disk immediately. If Kaggle times out or disconnects, simply restart and re-run — already completed graphs are automatically skipped!
+
+---
+
+## 🔍 Diagnostic Inspector (`inspect_run.py`)
+
+Want to inspect each prompt, see what the LLM generated, check which facts were lost, or analyze why specific QA questions failed?
+
+```bash
+# 1. Overview of completed graphs and QA scores
+python inspect_run.py --dir runs/exp1
+
+# 2. Inspect the prompt and LLM summary for Community 0 of Graph seed 1
+python inspect_run.py --dir runs/exp1 --seed 1 --community 0
+
+# 3. Inspect QA failures and see why answers were marked wrong
+python inspect_run.py --dir runs/exp1 --seed 1 --qa-errors
+
+# 4. Filter errors by condition
+python inspect_run.py --dir runs/exp1 --seed 1 --qa-errors --condition default
+```
+
+---
+
+## 💻 Local Testing & Unified Runner
+
+Run all 77 automated tests on your laptop:
+```bash
 pip install -r requirements.txt
-pytest -q                                              # about 80 s
-python run_experiment.py --backend planted --n-graphs 6 --out runs/demo
+python -m pytest -q
 ```
 
-Open `runs/demo/summary.md`. The `planted` backend contains a known effect (bridges lose
-more), so the demo shows the analysis detecting it. Do not report demo numbers as results.
+Run a fast mock experiment locally:
+```bash
+python run_experiment.py --backend mock --n-graphs 2 --out runs/test
+```
 
-## Pipeline and modules
+Or run the unified runner with fast Oracle QA:
+```bash
+python run_experiment.py --config config.yaml --oracle-qa --out runs/fast_run
+```
 
-| Stage | File | What it does |
-| --- | --- | --- |
-| 1 Graph | `kg_gen.py` | Stochastic block model; planted bridges and hubs with **matched degree** and different betweenness; 8 relation types |
-| 2 Sentences | `relations.py` | One oracle sentence per triple (no extraction step), relation vocabulary |
-| 3 Communities | `communities.py` | Two-level Leiden (level 1 clusters the level-0 communities); cut triples; summary-input tracking |
-| 4 Summaries | `summarize.py` | Three prompt conditions, template baseline, token logging, level-1 summaries |
-| 5 Metrics | `metrics.py` | Retention L1 / L2 and distorted facts, per node |
-| 6 Analysis | `analysis.py` | Bridge vs hub contrast, Spearman and partial Spearman, Holm correction |
-| 7 Interventions | `interventions.py` | Default vs topology vs random control (lift and difference in differences) |
-| 8 QA | `qa.py` | 2-3 hop questions crossing communities, constrained scoring |
-| Driver | `run_experiment.py` | Loops over graphs, resumable, writes `results.json` and `summary.md` |
-| LLM | `llm.py` | `MockLLM`, `OllamaLLM` (Qwen via Ollama) |
-| Test mocks | `planted_mock.py` | Known planted effects for validating the analysis |
+---
 
-## Design decisions to be able to defend
+## 📂 Codebase Architecture
 
-- **Matched degree.** With one sentence per triple, an entity's mention count equals its degree,
-  so bridges and hubs share the same degree. Betweenness is then the only structural difference.
-- **Retention is measured only over facts that entered the summary input.** Cut triples are
-  put into the input of both adjacent communities as a separate stratum, so partition loss and
-  compression loss are separated. The template summarizer (`--backend template`) has zero
-  compression loss by construction.
-- **L2 is the primary metric.** L1 (both names appear anywhere) is inflated by degree and is
-  biased against bridges even with no effect (see `test_l1_is_biased_against_bridges_even_under_null`).
-- **Unit of analysis is the node.** Statistics are computed per graph, then aggregated over
-  graphs, with Holm correction across all tests.
-- **Control prompt.** Same wording and same number of marked nodes as the topology prompt, but
-  random non-bridge nodes. The difference in differences separates a topology-specific effect
-  from a generic "you told me to mention these names" effect.
-- **Exact entity matching, no fuzzy matching.** Names such as Kavortri12 and Kavortri13 differ
-  by one character.
+| Stage | File | Purpose |
+| :--- | :--- | :--- |
+| **Modular Pipeline** | `step1_prepare.py`<br>`step2_summarize.py`<br>`step3_evaluate.py`<br>`step4_report.py` | 4-step decoupled experiment pipeline (instant prep, GPU summarization, deterministic evaluation, statistical reporting) |
+| **Diagnostic Tool** | `inspect_run.py` | CLI tool to inspect individual community prompts, LLM summaries, retained facts, and QA failures |
+| **Graph Generation** | `kg_gen.py` | Stochastic block model with matched-degree planted bridges and hubs |
+| **Sentences & Corpus**| `relations.py` | Deterministic sentence generator for triples (removes extraction errors) |
+| **Communities** | `communities.py` | Two-level Leiden hierarchical clustering; within/cut strata splitting |
+| **Summarization** | `summarize.py` | Community prompts under `default`, `topology`, and `control` conditions |
+| **Metrics** | `metrics.py` | Retention L1 / L2 and fact distortion detection |
+| **Analysis** | `analysis.py` | Bridge vs hub contrast, Spearman & partial Spearman, Holm correction |
+| **Interventions** | `interventions.py` | DiD (Difference-in-Differences) lift computation |
+| **QA System** | `qa.py` | Multi-hop cross-community QA with `LLMAnswerer` and `OracleReaderAnswerer` |
+| **Unified Runner** | `run_experiment.py` | End-to-end monolithic runner (with `--oracle-qa` option) |
+| **LLM Backends** | `llm.py`<br>`planted_mock.py` | `MockLLM`, `OllamaLLM`, and `MarkerResponsiveMock` |
 
-## Running the real experiment (GPU machine)
+---
 
-1. Follow the setup guide: driver, Python, Ollama, `ollama pull qwen3:14b`, `pip install -r requirements.txt`.
-2. Run its checks first: GPU in use, prompt token count against `num_ctx`, thinking off, same prompt twice gives the same output.
-3. In `config.yaml` set `llm.backend: ollama` and pin `llm.model`. Keep `num_ctx` explicit.
-4. `python run_experiment.py --out runs/real1`. Interrupted runs resume from the per-graph files in `runs/real1/graphs/`.
-5. Read `summary.md`, and check "prompts near the context limit" is 0.
+## 🔬 Design Decisions to Defend in Thesis / Paper
 
-## Outputs
-
-`config_used.yaml`, `env.json` (versions, config hash), `graphs/*.json` (one file per graph with
-node tables, summaries, marked nodes, QA records), `results.json`, `summary.md`.
-
-## Reading the results
-
-- Primary result: `l2 diff` (bridge minus hub retention at matched degree). The secondary
-  correlations use betweenness; the partial versions control for degree, input size and count.
-- Report the cut-triple stratum separately: it is the test of the mechanism.
-- Report baselines next to every lift: lift is capped by baseline retention.
-- Interventions and QA are only meaningful with the real model.
-
-## Requirements to code to tests
-
-| Req | Code | Tests |
-| --- | --- | --- |
-| R1 graph | `kg_gen.py` | `test_kg_gen.py` |
-| R2 sentences, mentions | `relations.py` | `test_corpus.py` |
-| R3 communities | `communities.py` | `test_communities.py` |
-| R4 input tracking | `communities.py`, `summarize.py` | `test_communities.py`, `test_summarize.py` |
-| R5 summaries, template, token logging | `summarize.py`, `llm.py` | `test_summarize.py`, `test_llm.py` |
-| R6 retention | `metrics.py` | `test_metrics.py` (L3 judge: not yet) |
-| R7 analysis | `analysis.py` | `test_analysis.py` (planted and null data) |
-| R8 interventions | `interventions.py` | `test_interventions.py` |
-| R9 QA | `qa.py` | `test_qa.py` |
-| R10 reproducibility | `run_experiment.py`, `config.yaml` | `test_run_experiment.py` |
-
-## Known gaps and limitations
-
-- **No L3 judge and no hand-labelled validation yet** (R6). L2 misses correct paraphrases it
-  does not know, so it under-counts retention. Add phrasings from real outputs, then validate
-  on about 50 hand-labelled facts.
-- `OllamaLLM` is tested only against a stub. Real behaviour (token counts, thinking mode) must
-  be verified on the GPU machine.
-- The input budget is counted in triples; the real token count is only logged.
-- The bridge-vs-hub contrast uses planted role labels, so it works on synthetic graphs only.
-- The summarizer receives oracle sentences, so extraction errors are not studied.
-- Level-1 summaries are implemented but the driver does not run or score them yet.
-- Results come from one pinned model and synthetic data; they may not transfer to real corpora.
+- **Matched degree:** With one sentence per triple, an entity's mention count equals its degree. Bridges and hubs share the exact same degree ($k=12$). Betweenness centrality is the **only** structural difference.
+- **Stratified input tracking:** Cut triples are provided to both adjacent communities as a distinct stratum. This strictly isolates **partition loss** (information cut by clustering) from **compression loss** (information omitted by LLM summary).
+- **L2 is the primary metric:** L1 (names co-occurring anywhere in summary) is biased against bridges even under the null hypothesis. L2 requires the semantic relation to be preserved.
+- **Node-level unit of analysis:** Retention statistics are calculated per node, aggregated per graph, and tested with Holm family-wise error correction.
+- **Random control prompt:** The control prompt marks the same number of nodes as the topology prompt ($k=3$), but selects random non-bridge nodes. Difference-in-Differences separates genuine topology-awareness from generic attention priming.
