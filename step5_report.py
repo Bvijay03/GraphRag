@@ -1,11 +1,11 @@
-"""Step 4: Aggregate results and write summary.md (NO LLM, runs in 1 second).
+"""Step 5: Statistical Reporting (NO LLM, runs in ~1 second).
 
-Loads evaluated graph JSONs from step3, aggregates across graphs,
-runs statistical tests (t-tests, Holm correction, sign tests),
-and writes results.json + summary.md.
+Aggregates evaluated graph records across seeds, runs statistical tests
+(t-tests, Holm family-wise correction, sign tests for QA),
+and writes results.json and summary.md.
 
 Usage:
-    python step4_report.py --config config.yaml --out runs/exp1
+    python step5_report.py --config config_kaggle.yaml --out runs/exp1
 """
 import argparse
 import json
@@ -17,9 +17,9 @@ from run_experiment import aggregate, write_summary
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Step 4: aggregate + write report (no LLM)")
-    ap.add_argument("--config", default="config.yaml")
-    ap.add_argument("--out", required=True, help="same output dir as step1/step2/step3")
+    ap = argparse.ArgumentParser(description="Step 5: Statistical Reporting (no LLM)")
+    ap.add_argument("--config", default="config_kaggle.yaml", help="config file")
+    ap.add_argument("--out", required=True, help="output directory")
     a = ap.parse_args()
 
     cfg = yaml.safe_load(open(a.config))
@@ -27,7 +27,7 @@ def main():
     graph_dir = Path(a.out) / "graphs"
 
     if not graph_dir.exists():
-        print("ERROR: No evaluated graphs found. Run step3_evaluate.py first.")
+        print(f"ERROR: Evaluated graphs directory {graph_dir}/ not found. Run step4_evaluate.py first.")
         return
 
     by_p, skipped = {}, []
@@ -43,11 +43,15 @@ def main():
             by_p[str(p)] = aggregate(records)
             print(f"  p_out={p}: aggregated {len(records)} graphs")
 
+    if not by_p:
+        print("ERROR: No evaluated graph records found matching the config seeds and p_out values.")
+        return
+
     out = Path(a.out)
     (out / "results.json").write_text(json.dumps(by_p, indent=2))
     write_summary(out / "summary.md", cfg, by_p, skipped)
 
-    print(f"\nDone! Report written to:")
+    print(f"\nStep 5 Complete! Reports written to:")
     print(f"  {out / 'summary.md'}")
     print(f"  {out / 'results.json'}")
     if skipped:
