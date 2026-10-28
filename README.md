@@ -36,7 +36,8 @@ In the monolithic runner, Qwen is asked to answer 120 QA questions per graph on 
    - **Persistence:** Files only
 3. Execute the notebook cells:
    ```bash
-   # Cell 1-2: Install Ollama & pull model
+   # Cell 1-2: Install zstd, Ollama & pull model
+   !apt-get update -qq && apt-get install -y -qq zstd
    !curl -fsSL https://ollama.com/install.sh | sh
    !ollama pull qwen3:8b
 
