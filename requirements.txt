@@ -1,6 +1,9 @@
 networkx
 python-igraph
+leidenalg
+statsmodels
 pyyaml
 pytest
 numpy
 scipy
+ollama
