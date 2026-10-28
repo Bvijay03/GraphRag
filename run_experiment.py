@@ -230,6 +230,7 @@ def main():
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--out", required=True)
     ap.add_argument("--backend", help="override llm.backend")
+    ap.add_argument("--model", help="override llm.model (e.g. qwen3:8b)")
     ap.add_argument("--n-graphs", type=int, help="override experiment.n_graphs")
     ap.add_argument("--oracle-qa", action="store_true", help="use fast deterministic Oracle QA (7x speedup on Kaggle)")
     ap.add_argument("--no-resume", action="store_true")
@@ -237,6 +238,8 @@ def main():
     cfg = yaml.safe_load(open(a.config))
     if a.backend:
         cfg["llm"]["backend"] = a.backend
+    if a.model:
+        cfg["llm"]["model"] = a.model
     if a.n_graphs:
         cfg["experiment"]["n_graphs"] = a.n_graphs
     run(cfg, a.out, resume=not a.no_resume, oracle_qa=a.oracle_qa)

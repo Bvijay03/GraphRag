@@ -13,7 +13,7 @@ graph:                      # p_out and seed are overridden per run by the exper
 
 llm:
   backend: mock             # mock | planted | template | ollama
-  model: qwen3:14b          # pin the exact tag you tested
+  model: qwen3:8b           # pin the exact tag you tested
   num_ctx: 16384            # always explicit: Ollama truncates silently by default
   temperature: 0
   seed: 42

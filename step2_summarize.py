@@ -87,12 +87,15 @@ def main():
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--out", required=True, help="same output dir as step1")
     ap.add_argument("--backend", help="override llm.backend")
+    ap.add_argument("--model", help="override llm.model (e.g. qwen3:8b)")
     ap.add_argument("--n-graphs", type=int, help="override experiment.n_graphs")
     a = ap.parse_args()
 
     cfg = yaml.safe_load(open(a.config))
     if a.backend:
         cfg["llm"]["backend"] = a.backend
+    if a.model:
+        cfg["llm"]["model"] = a.model
     ex = cfg["experiment"]
     if a.n_graphs:
         ex["n_graphs"] = a.n_graphs
